@@ -1,0 +1,10 @@
+INFO 2026-08-14 21:13:07,052 autoreload 16896 1340 Watching for file changes with StatReloader
+INFO 2026-08-14 22:09:48,871 autoreload 13780 1984 Watching for file changes with StatReloader
+INFO 2026-08-14 22:12:09,331 autoreload 12852 17144 Watching for file changes with StatReloader
+INFO 2026-08-14 22:14:00,093 autoreload 12852 17144 C:\Users\Ucac-icam.local\redsquare\backend\config\settings.py changed, reloading.
+INFO 2026-08-14 22:14:01,300 autoreload 6764 8996 Watching for file changes with StatReloader
+INFO 2026-08-14 22:14:16,111 autoreload 6764 8996 C:\Users\Ucac-icam.local\redsquare\backend\config\settings.py changed, reloading.
+INFO 2026-08-14 22:14:17,116 autoreload 16300 3476 Watching for file changes with StatReloader
+INFO 2026-08-14 22:14:22,286 autoreload 16144 8544 Watching for file changes with StatReloader
+INFO 2026-08-14 22:18:05,384 autoreload 16932 10216 Watching for file changes with StatReloader
+INFO 2026-08-14 22:26:29,580 autoreload 16932 10216 C:\Users\Ucac-icam.local\redsquare\backend\accounts\models.py changed, reloading.
