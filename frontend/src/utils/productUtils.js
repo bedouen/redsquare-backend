@@ -10,7 +10,37 @@
  * @param {Object} product - L'objet produit
  * @returns {string|null} - L'URL de l'image ou null
  */
+// utils/productImage.js ou directement dans ProductCard.jsx
+
 export const getProductImage = (product) => {
+  if (!product) return null;
+  
+  // Priorité: front > left > top > right
+  let imagePath = null;
+  if (product.image_front) imagePath = product.image_front;
+  else if (product.image_left) imagePath = product.image_left;
+  else if (product.image_top) imagePath = product.image_top;
+  else if (product.image_right) imagePath = product.image_right;
+  else if (product.image) imagePath = product.image; // Fallback pour l'ancien champ
+  
+  if (!imagePath) return null;
+  
+  // ✅ Si l'URL est déjà complète (http ou https)
+  if (imagePath.startsWith('http://') || imagePath.startsWith('https://')) {
+    return imagePath;
+  }
+  
+  // ✅ Si l'URL commence par /media/ (relative)
+  if (imagePath.startsWith('/media/')) {
+    const baseUrl = import.meta.env.VITE_API_URL?.replace('/api', '') || 'https://redsquare-backend-production.up.railway.app';
+    return `${baseUrl}${imagePath}`;
+  }
+  
+  // ✅ Si l'URL est juste le nom du fichier (sans /media/)
+  const baseUrl = import.meta.env.VITE_API_URL?.replace('/api', '') || 'https://redsquare-backend-production.up.railway.app';
+  return `${baseUrl}/media/${imagePath}`;
+};
+/*export const getProductImage = (product) => {
   if (!product) return null;
   
   // Priorité: front > left > top > right
@@ -21,7 +51,7 @@ export const getProductImage = (product) => {
   if (product.image) return product.image; // Fallback pour l'ancien champ
   
   return null;
-};
+};*/
 
 /**
  * Récupère toutes les images disponibles d'un produit
