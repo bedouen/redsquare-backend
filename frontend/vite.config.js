@@ -7,25 +7,17 @@ export default defineConfig({
     port: 5173,
   },
 });*/
-
-// frontend/vite.config.js
 import { defineConfig } from 'vite'
-import react from '@vitejs/plugin-react'
+import react from '@vitejs/plugin-react' // ou vue, selon ton framework
 
 export default defineConfig({
   plugins: [react()],
+  preview: {
+    host: true,
+    allowedHosts: ['redsquare-o-production.up.railway.app']
+  },
   server: {
     host: true,
-    port: 5173,
-    proxy: {
-      '/api': {
-        target: process.env.VITE_API_URL || 'http://localhost:8000',
-        changeOrigin: true,
-      }
-    }
-  },
-  build: {
-    outDir: 'dist',
-    sourcemap: true,
-  },
+    allowedHosts: ['redsquare-o-production.up.railway.app']
+  }
 })

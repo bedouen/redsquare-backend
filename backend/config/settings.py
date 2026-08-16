@@ -19,7 +19,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # SÉCURITÉ
 # ═══════════════════════════════════════════════════════════════
 
-SECRET_KEY = config("SECRET_KEY", default="dev-secret-key-change-me")
+SECRET_KEY = config("SECRET_KEY", default="hK_X1NnfhDlFf3XBdnB2jIeLm6mFdzcDjV6FUZt8FSi4hLMNpzWnxl6QCKuYDfw2V7o")
 DEBUG = config("DEBUG", default=True, cast=bool)
 
 # ⚠️ Pour Railway, accepter tous les hosts ou spécifier les domaines
