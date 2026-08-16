@@ -169,7 +169,8 @@ export default function AdminDashboard() {
         await loadBuyersDetail();
       }
       
-      setOrdersData(response.data.orders || []);
+      // ✅ CORRIGÉ : gère aussi le cas où la réponse est paginée ({results: [...]})
+      setOrdersData(response.data.orders?.results || response.data.orders || []);
     } catch (error) {
       console.error("Erreur lors du chargement des statistiques:", error);
       toast.error("Erreur lors du chargement des statistiques");
@@ -185,7 +186,8 @@ export default function AdminDashboard() {
         params: { date_from: dateFrom, date_to: dateTo }
       });
       
-      const data = response.data || [];
+      // ✅ CORRIGÉ : extrait bien le tableau même si l'API renvoie une réponse paginée
+      const data = response.data.results || response.data || [];
       
       if (data.length === 0) {
         console.log("Aucune donnée de vente trouvée pour cette période");
@@ -228,7 +230,8 @@ export default function AdminDashboard() {
       const response = await api.get("/reports/sales-detail/", {
         params: { date_from: dateFrom, date_to: dateTo }
       });
-      setOrdersData(response.data || []);
+      // ✅ CORRIGÉ : extrait bien le tableau même si l'API renvoie une réponse paginée
+      setOrdersData(response.data.results || response.data || []);
     } catch (error) {
       console.error("Erreur lors du chargement des commandes:", error);
     }
