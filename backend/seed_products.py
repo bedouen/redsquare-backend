@@ -1,353 +1,237 @@
 #!/usr/bin/env python
-"""
-Remplit la table `products` avec des produits de démonstration.
-Chaque produit reçoit 4 vues d'images (front, gauche, dessus, droite)
-téléchargées depuis plusieurs sources d'images libres de droits.
-
-Usage :
-    python seed_products.py
-    python seed_products.py --force
-    python seed_products.py --dry-run
-"""
-
 import os
 import sys
 import random
 import time
-import argparse
-import uuid
+import requests
 from pathlib import Path
 from decimal import Decimal
-from io import BytesIO
-
-import requests
 from django.core.files.base import ContentFile
-from django.core.files import File
-from django.core.files.temp import NamedTemporaryFile
-from PIL import Image
 
-# ═══════════════════════════════════════════════════════════════
-# ÉTAPE 1 : Configurer Django AVANT d'importer les modèles
-# ═══════════════════════════════════════════════════════════════
-
-current_dir = Path(__file__).parent.absolute()
-sys.path.insert(0, str(current_dir))
+# Configurer Django
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.settings')
+sys.path.insert(0, str(Path(__file__).parent.absolute()))
 
-print(f"📁 Module de configuration : {os.environ.get('DJANGO_SETTINGS_MODULE')}")
-
-try:
-    import django
-    django.setup()
-    print("✅ Django configuré avec succès\n")
-except Exception as e:
-    print(f"❌ Erreur lors du chargement de Django : {e}")
-    sys.exit(1)
-
-# ═══════════════════════════════════════════════════════════════
-# ÉTAPE 2 : Importer les modèles
-# ═══════════════════════════════════════════════════════════════
+import django
+django.setup()
 
 from django.contrib.auth import get_user_model
 from django.db import transaction
-from django.conf import settings
 from catalog.models import Category, Product
 
 User = get_user_model()
 
 # ═══════════════════════════════════════════════════════════════
-# ÉTAPE 3 : Fonctions pour télécharger les images
-# ═══════════════════════════════════════════════════════════════
-
-def generate_placeholder_image(text, width=400, height=400):
-    """Génère une image placeholder avec du texte."""
-    try:
-        # Créer une image simple avec PIL
-        img = Image.new('RGB', (width, height), color=(230, 57, 70))
-        from PIL import ImageDraw, ImageFont
-        draw = ImageDraw.Draw(img)
-        
-        # Texte centré
-        try:
-            font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 30)
-        except:
-            font = ImageFont.load_default()
-        
-        # Positionner le texte au centre
-        text_bbox = draw.textbbox((0, 0), text[:15], font=font)
-        text_width = text_bbox[2] - text_bbox[0]
-        text_height = text_bbox[3] - text_bbox[1]
-        x = (width - text_width) // 2
-        y = (height - text_height) // 2
-        draw.text((x, y), text[:15], fill=(255, 255, 255), font=font)
-        
-        # Sauvegarder en mémoire
-        buffer = BytesIO()
-        img.save(buffer, format='JPEG', quality=85)
-        return ContentFile(buffer.getvalue())
-    except Exception as e:
-        print(f"  ⚠️ Erreur génération placeholder: {e}")
-        return None
-
-def download_image_from_url(url, timeout=10):
-    """Télécharge une image depuis une URL."""
-    try:
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
-        response = requests.get(url, headers=headers, timeout=timeout, allow_redirects=True)
-        if response.status_code == 200:
-            content_type = response.headers.get('content-type', '')
-            if 'image' in content_type:
-                return ContentFile(response.content)
-        return None
-    except Exception as e:
-        print(f"  ⚠️ Erreur téléchargement: {e}")
-        return None
-
-def download_image_unsplash(keyword, width=400, height=400):
-    """Télécharge une image depuis Unsplash."""
-    url = f"https://source.unsplash.com/{width}x{height}/?{keyword}"
-    return download_image_from_url(url)
-
-def download_image_picsum(keyword, width=400, height=400):
-    """Télécharge une image depuis Picsum."""
-    url = f"https://picsum.photos/{width}/{height}?random={random.randint(1, 1000)}"
-    return download_image_from_url(url)
-
-def download_image_placeholder(keyword, width=400, height=400):
-    """Télécharge une image depuis Placeholder."""
-    text = keyword.replace('-', ' ').title()[:20]
-    url = f"https://via.placeholder.com/{width}x{height}/E63946/FFFFFF?text={text}"
-    return download_image_from_url(url)
-
-def download_all_images(keyword, base_filename):
-    """Télécharge les 4 vues d'images pour un produit."""
-    result = {'front': None, 'left': None, 'top': None, 'right': None}
-    
-    sources = [
-        ('Unsplash', download_image_unsplash),
-        ('Picsum', download_image_picsum),
-        ('Placeholder', download_image_placeholder),
-    ]
-    
-    views = ['front', 'left', 'top', 'right']
-    view_labels = ['FACE', 'GAUCHE', 'DESSUS', 'DROITE']
-    
-    for view, label in zip(views, view_labels):
-        print(f"  📥 [{label}] {keyword}...")
-        image_content = None
-        
-        # Essayer chaque source
-        for source_name, source_func in sources:
-            try:
-                content = source_func(keyword if view == 'front' else f"{keyword}-{view}")
-                if content:
-                    image_content = content
-                    print(f"    ✅ Téléchargé via {source_name}")
-                    break
-            except Exception as e:
-                continue
-        
-        # Si aucune source ne fonctionne, générer un placeholder
-        if not image_content:
-            print(f"    ⚠️ Génération d'un placeholder pour {view}")
-            image_content = generate_placeholder_image(f"{keyword[:10]}-{view[:2]}")
-        
-        if image_content:
-            result[view] = image_content
-            time.sleep(0.2)  # Pause pour ne pas surcharger les serveurs
-    
-    return result
-
-# ═══════════════════════════════════════════════════════════════
-# ÉTAPE 4 : Données des produits
+# DONNÉES DES PRODUITS AVEC MOTS-CLÉS POUR LES IMAGES
 # ═══════════════════════════════════════════════════════════════
 
 PRODUCTS_DATA = [
+    # Téléphonie & Accessoires
     ("Smartphone Galaxy A15", "Écran AMOLED 6.5 pouces, 128 Go, double SIM, batterie longue durée.",
-     25, 145000, "Téléphonie & Accessoires", "smartphone"),
-    ("Écouteurs sans fil", "Bluetooth 5.3, réduction de bruit active, autonomie 30h avec boîtier.",
-     40, 18500, "Téléphonie & Accessoires", "earbuds"),
-    ("Chargeur solaire portable", "Panneau solaire pliable 20W avec batterie 10000mAh intégrée.",
-     15, 22000, "Électronique", "solar"),
-    ("Télévision LED 43 pouces", "Smart TV Full HD avec Netflix, YouTube et Wifi intégré.",
-     10, 185000, "Électronique", "tv"),
-    ("Ordinateur portable 15\"", "Intel Core i5, 8 Go RAM, 512 Go SSD, idéal bureautique et études.",
-     8, 385000, "Électronique", "laptop"),
-    ("Robe wax élégante", "Robe traditionnelle en tissu wax, coupe moderne, taille unique ajustable.",
-     20, 25000, "Mode & Vêtements", "dress"),
-    ("Chemise homme slim fit", "Chemise en coton, coupe ajustée, disponible en plusieurs couleurs.",
-     35, 12000, "Mode & Vêtements", "shirt"),
-    ("Sac à main cuir", "Sac à main en cuir véritable, plusieurs compartiments, bandoulière amovible.",
-     18, 35000, "Mode & Vêtements", "bag"),
-    ("Baskets running homme", "Chaussures de sport respirantes, semelle amortissante, légères.",
-     30, 28000, "Chaussures", "shoes"),
-    ("Sandales femme été", "Sandales confortables en cuir synthétique, semelle antidérapante.",
-     25, 15000, "Chaussures", "sandals"),
-    ("Service à café en céramique", "Set de 6 tasses avec soucoupes, design moderne, passe au lave-vaisselle.",
-     12, 19500, "Maison & Cuisine", "cups"),
-    ("Mixeur électrique multifonction", "Mixeur 1000W avec 3 vitesses, bol en verre 1.5L, lames en inox.",
-     14, 32000, "Maison & Cuisine", "blender"),
-    ("Lot de casseroles inox", "Set de 5 casseroles antiadhésives avec couvercles en verre.",
-     10, 45000, "Maison & Cuisine", "cookware"),
-    ("Crème hydratante visage", "Crème hydratante naturelle au beurre de karité, tous types de peau.",
-     50, 6500, "Beauté & Cosmétiques", "cream"),
-    ("Parfum homme boisé", "Eau de toilette 100ml, notes boisées et épicées, longue tenue.",
-     22, 28500, "Beauté & Cosmétiques", "perfume"),
-    ("Kit de maquillage complet", "Palette de fards à paupières, rouges à lèvres et pinceaux inclus.",
-     16, 22000, "Beauté & Cosmétiques", "makeup"),
-    ("Riz parfumé 25kg", "Sac de riz long grain parfumé, qualité supérieure, origine Asie.",
-     60, 21000, "Épicerie & Alimentation", "rice"),
-    ("Huile végétale 5L", "Huile de table raffinée, idéale pour la cuisson et la friture.",
-     45, 8500, "Épicerie & Alimentation", "oil"),
-    ("Ballon de football officiel", "Ballon taille 5, homologué compétition, résistant à l'usure.",
-     20, 14500, "Sport & Loisirs", "football"),
+     25, 145000, "Téléphonie & Accessoires", ["phone", "smartphone", "tech"]),
+    ("Écouteurs sans fil", "Bluetooth 5.3, réduction de bruit active, autonomie 30h.",
+     40, 18500, "Téléphonie & Accessoires", ["headphone", "earbuds", "audio"]),
+    
+    # Sport & Loisirs
     ("Tapis de yoga antidérapant", "Tapis épais 6mm, surface antidérapante, sac de transport inclus.",
-     24, 16000, "Sport & Loisirs", "yoga"),
+     24, 16000, "Sport & Loisirs", ["yoga", "fitness", "sport"]),
+    ("Ballon de football officiel", "Ballon taille 5, homologué compétition, résistant à l'usure.",
+     20, 14500, "Sport & Loisirs", ["football", "soccer", "sport"]),
+    
+    # Épicerie & Alimentation
+    ("Huile végétale 5L", "Huile de table raffinée, idéale pour la cuisson et la friture.",
+     45, 8500, "Épicerie & Alimentation", ["oil", "cooking", "kitchen"]),
+    ("Riz parfumé 25kg", "Sac de riz long grain parfumé, qualité supérieure, origine Asie.",
+     60, 21000, "Épicerie & Alimentation", ["rice", "food", "grocery"]),
+    
+    # Beauté & Cosmétiques
+    ("Kit de maquillage complet", "Palette de fards à paupières, rouges à lèvres et pinceaux inclus.",
+     16, 22000, "Beauté & Cosmétiques", ["makeup", "cosmetics", "beauty"]),
+    ("Parfum homme boisé", "Eau de toilette 100ml, notes boisées et épicées, longue tenue.",
+     22, 28500, "Beauté & Cosmétiques", ["perfume", "fragrance", "luxury"]),
+    ("Crème hydratante visage", "Crème hydratante naturelle au beurre de karité, tous types de peau.",
+     50, 6500, "Beauté & Cosmétiques", ["cream", "skincare", "beauty"]),
+    
+    # Maison & Cuisine
+    ("Lot de casseroles inox", "Set de 5 casseroles antiadhésives avec couvercles en verre.",
+     10, 45000, "Maison & Cuisine", ["cookware", "kitchen", "pots"]),
+    ("Mixeur électrique multifonction", "Mixeur 1000W avec 3 vitesses, bol en verre 1.5L.",
+     14, 32000, "Maison & Cuisine", ["blender", "kitchen", "appliance"]),
+    ("Service à café en céramique", "Set de 6 tasses avec soucoupes, design moderne.",
+     12, 19500, "Maison & Cuisine", ["coffee", "cups", "ceramic"]),
+    
+    # Chaussures
+    ("Sandales femme été", "Sandales confortables en cuir synthétique, semelle antidérapante.",
+     25, 15000, "Chaussures", ["sandals", "shoes", "summer"]),
+    ("Baskets running homme", "Chaussures de sport respirantes, semelle amortissante, légères.",
+     30, 28000, "Chaussures", ["sneakers", "running", "shoes"]),
+    
+    # Mode & Vêtements
+    ("Sac à main cuir", "Sac à main en cuir véritable, plusieurs compartiments, bandoulière amovible.",
+     18, 35000, "Mode & Vêtements", ["bag", "leather", "fashion"]),
+    ("Chemise homme slim fit", "Chemise en coton, coupe ajustée, disponible en plusieurs couleurs.",
+     35, 12000, "Mode & Vêtements", ["shirt", "fashion", "clothing"]),
+    ("Robe wax élégante", "Robe traditionnelle en tissu wax, coupe moderne, taille unique ajustable.",
+     20, 25000, "Mode & Vêtements", ["dress", "fashion", "wax"]),
+    
+    # Électronique
+    ("Ordinateur portable 15\"", "Intel Core i5, 8 Go RAM, 512 Go SSD, idéal bureautique.",
+     8, 385000, "Électronique", ["laptop", "computer", "tech"]),
+    ("Télévision LED 43 pouces", "Smart TV Full HD avec Netflix, YouTube et Wifi intégré.",
+     10, 185000, "Électronique", ["tv", "television", "tech"]),
+    ("Chargeur solaire portable", "Panneau solaire pliable 20W avec batterie 10000mAh intégrée.",
+     15, 22000, "Électronique", ["solar", "charger", "tech"]),
 ]
 
 # ═══════════════════════════════════════════════════════════════
-# ÉTAPE 5 : Fonction principale
+# FONCTIONS DE TÉLÉCHARGEMENT D'IMAGES
+# ═══════════════════════════════════════════════════════════════
+
+def download_image_unsplash(keywords, width=600, height=600):
+    """Télécharge une image depuis Unsplash."""
+    try:
+        # Essayer avec un mot-clé aléatoire
+        keyword = random.choice(keywords)
+        url = f"https://source.unsplash.com/featured/{width}x{height}/?{keyword}"
+        
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
+        
+        response = requests.get(url, headers=headers, timeout=15, allow_redirects=True)
+        
+        if response.status_code == 200:
+            content_type = response.headers.get('content-type', '')
+            if 'image' in content_type:
+                print(f"    ✅ Unsplash: {keyword}")
+                return ContentFile(response.content)
+        
+        # Si échec, essayer avec un autre mot-clé
+        for alt_keyword in keywords[1:]:
+            alt_url = f"https://source.unsplash.com/featured/{width}x{height}/?{alt_keyword}"
+            alt_response = requests.get(alt_url, headers=headers, timeout=10, allow_redirects=True)
+            if alt_response.status_code == 200 and 'image' in alt_response.headers.get('content-type', ''):
+                print(f"    ✅ Unsplash: {alt_keyword}")
+                return ContentFile(alt_response.content)
+        
+        return None
+    except Exception as e:
+        print(f"    ⚠️ Unsplash error: {e}")
+        return None
+
+def download_image_picsum(width=600, height=600):
+    """Télécharge une image aléatoire depuis Picsum."""
+    try:
+        url = f"https://picsum.photos/{width}/{height}?random={random.randint(1, 10000)}"
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+        response = requests.get(url, headers=headers, timeout=10, allow_redirects=True)
+        
+        if response.status_code == 200:
+            content_type = response.headers.get('content-type', '')
+            if 'image' in content_type:
+                print(f"    ✅ Picsum")
+                return ContentFile(response.content)
+        return None
+    except Exception as e:
+        print(f"    ⚠️ Picsum error: {e}")
+        return None
+
+def download_image(keywords, width=600, height=600):
+    """Télécharge une image depuis plusieurs sources."""
+    # Essayer Unsplash d'abord
+    image = download_image_unsplash(keywords, width, height)
+    if image:
+        return image
+    
+    # Fallback sur Picsum
+    print(f"    🔄 Fallback Picsum...")
+    image = download_image_picsum(width, height)
+    if image:
+        return image
+    
+    print(f"    ❌ Échec téléchargement")
+    return None
+
+# ═══════════════════════════════════════════════════════════════
+# FONCTION PRINCIPALE
 # ═══════════════════════════════════════════════════════════════
 
 @transaction.atomic
-def seed_products(force=False, dry_run=False):
-    """Fonction principale de seeding des produits."""
-    print("=" * 60)
-    print("🚀 REDSQUARE - Initialisation des produits (4 vues d'images)")
-    print("=" * 60)
+def seed_products_real_images():
+    print("=" * 70)
+    print("🚀 REDSQUARE - Seed produits avec vraies images")
+    print("=" * 70)
     
-    if dry_run:
-        print("🔍 Mode DRY-RUN : aucune modification réelle.\n")
+    # Récupérer un admin
+    admin = User.objects.filter(is_superuser=True).first()
+    if not admin:
+        print("❌ Aucun super-admin trouvé !")
+        print("  Créez-en un : python manage.py createsuperuser")
+        return
     
-    # Récupérer les admins
-    admins = list(User.objects.filter(is_superuser=True))
-    if not admins:
-        admins = list(User.objects.filter(role='super_admin'))
+    print(f"✅ Admin: {admin.phone_number}\n")
     
-    if not admins:
-        print("❌ Aucun Admin ou Super-Admin trouvé !")
-        print("  Veuillez créer un super-admin d'abord :")
-        print("  python manage.py createsuperuser")
-        return {'success': False, 'error': 'No admin found'}
+    # Supprimer les produits existants
+    count = Product.objects.count()
+    Product.objects.all().delete()
+    print(f"✅ {count} produits supprimés\n")
+    print("📥 Téléchargement des images en cours...\n")
     
-    print(f"✅ {len(admins)} Admin(s)/Super-Admin(s) trouvé(s)")
+    stats = {'created': 0, 'errors': 0}
     
-    # Supprimer les produits si force
-    if force and not dry_run:
-        count = Product.objects.count()
-        if count > 0:
-            print(f"⚠️ Suppression de {count} produit(s) existant(s)...")
-            Product.objects.all().delete()
-            print(f"✅ {count} produit(s) supprimé(s).\n")
-    
-    stats = {'created': 0, 'skipped': 0, 'errors': 0, 'total': 0}
-    
-    print("\n📦 Création des produits :")
-    print("-" * 50)
-    
-    for name, description, quantity, price, category_name, keyword in PRODUCTS_DATA:
-        if dry_run:
-            print(f"  🔍 [SIMULATION] Produit « {name} » sera créé.")
-            stats['created'] += 1
-            continue
+    for name, description, quantity, price, category_name, keywords in PRODUCTS_DATA:
+        print(f"📦 {name}")
         
         try:
             category = Category.objects.get(name=category_name)
         except Category.DoesNotExist:
-            print(f"  ⚠️ Catégorie « {category_name} » introuvable. Ignoré.")
-            stats['skipped'] += 1
-            continue
-        
-        created_by = random.choice(admins)
-        
-        if Product.objects.filter(name=name, created_by=created_by, category=category).exists():
-            print(f"  ⏭️  « {name} » existe déjà, ignoré.")
-            stats['skipped'] += 1
+            print(f"  ⚠️ Catégorie « {category_name} » introuvable.")
+            stats['errors'] += 1
             continue
         
         try:
+            # Créer le produit
             product = Product(
                 name=name,
                 description=description,
                 quantity=quantity,
                 unit_price=Decimal(price),
                 category=category,
-                created_by=created_by,
+                created_by=admin,
             )
             
-            print(f"\n  📦 Produit : {name}")
-            print(f"  🖼️  Téléchargement des images...")
+            # Télécharger l'image
+            print(f"  📥 Téléchargement...")
+            image_file = download_image(keywords)
             
-            file_id = random.randint(1000, 9999)
-            base_filename = f"{keyword}_{file_id}.jpg"
+            if image_file:
+                # Sauvegarder l'image
+                safe_name = name[:15].replace(' ', '_').replace('"', '').replace("'", '')
+                filename = f"front_{safe_name}_{random.randint(1000,9999)}.jpg"
+                product.image_front.save(filename, image_file, save=False)
+                print(f"  ✅ Image téléchargée")
+            else:
+                print(f"  ⚠️ Aucune image trouvée, placeholder")
             
-            images = download_all_images(keyword, base_filename)
-            
-            # Assigner les images au produit
-            img_count = 0
-            if images and images.get('front'):
-                product.image_front = images['front']
-                img_count += 1
-            
-            if images and images.get('left'):
-                product.image_left = images['left']
-                img_count += 1
-            
-            if images and images.get('top'):
-                product.image_top = images['top']
-                img_count += 1
-            
-            if images and images.get('right'):
-                product.image_right = images['right']
-                img_count += 1
-            
-            # Sauvegarder le produit avec les images
+            # Sauvegarder le produit
             product.save()
             stats['created'] += 1
+            print(f"  ✅ Produit créé\n")
             
-            print(f"  ✅ Produit « {name} » créé avec {img_count}/4 vues d'images")
-            print(f"     Prix: {price:,} FCFA")
+            # Pause pour ne pas surcharger les serveurs
+            time.sleep(0.3)
             
         except Exception as e:
-            print(f"  ❌ Erreur pour « {name} » : {e}")
+            print(f"  ❌ Erreur: {e}\n")
             stats['errors'] += 1
     
-    stats['total'] = Product.objects.count()
+    print("=" * 70)
+    print(f"📊 RÉSULTAT : {stats['created']} produits créés, {stats['errors']} erreurs")
+    print("=" * 70)
     
-    print("\n" + "-" * 50)
-    print("\n📊 RÉSULTAT :")
-    print(f"  • Produits créés : {stats['created']}")
-    if stats['skipped'] > 0:
-        print(f"  • Produits ignorés : {stats['skipped']}")
-    if stats['errors'] > 0:
-        print(f"  • Erreurs : {stats['errors']}")
-    print(f"  • Total dans la base : {stats['total']} produits.")
-    
-    stats['success'] = True
-    return stats
-
-
-# ═══════════════════════════════════════════════════════════════
-# ÉTAPE 6 : Point d'entrée
-# ═══════════════════════════════════════════════════════════════
+    # Vérification
+    products_with_images = Product.objects.filter(image_front__isnull=False).count()
+    print(f"📸 Produits avec image : {products_with_images}/{stats['created']}")
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        description="Initialise les produits du site e-commerce RedSquare."
-    )
-    parser.add_argument('--force', action='store_true', help='Supprime et recrée tous les produits.')
-    parser.add_argument('--dry-run', action='store_true', help='Simule l\'exécution sans modifier la base.')
-    
-    args = parser.parse_args()
-    
-    try:
-        result = seed_products(force=args.force, dry_run=args.dry_run)
-        sys.exit(0 if result.get('success', False) else 1)
-    except KeyboardInterrupt:
-        print("\n\n⚠️ Interruption par l'utilisateur.")
-        sys.exit(130)
-    except Exception as e:
-        print(f"\n❌ Erreur inattendue : {e}")
-        import traceback
-        traceback.print_exc()
-        sys.exit(1)
+    seed_products_real_images()
