@@ -163,6 +163,10 @@ STATICFILES_DIRS = [
 # ✅ Whitenoise pour servir les fichiers statiques en production
 STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
 
+# ═══════════════════════════════════════════════════════════════
+# CONFIGURATION DES FICHIERS MEDIA - IMPORTANT POUR RAILWAY
+# ═══════════════════════════════════════════════════════════════
+
 MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
 
@@ -197,7 +201,7 @@ REST_FRAMEWORK = {
 
 # ═══════════════════════════════════════════════════════════════
 # SIMPLE JWT
-# ════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════
 
 SIMPLE_JWT = {
     "ACCESS_TOKEN_LIFETIME": timedelta(hours=2),
