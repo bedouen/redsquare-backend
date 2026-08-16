@@ -209,12 +209,12 @@ SIMPLE_JWT = {
 }
 
 # ═══════════════════════════════════════════════════════════════
-# CORS
+# CORS - MIS À JOUR AVEC L'URL DE PRODUCTION DU FRONTEND
 # ═══════════════════════════════════════════════════════════════
 
 CORS_ALLOWED_ORIGINS = config(
     "CORS_ALLOWED_ORIGINS",
-    default="http://localhost:5173,http://127.0.0.1:5173,https://redsquare-frontend.railway.app",
+    default="http://localhost:5173,http://127.0.0.1:5173,https://redsquare-o-production.up.railway.app,https://redsquare-o.railway.app",
     cast=Csv()
 )
 CORS_ALLOW_CREDENTIALS = True
