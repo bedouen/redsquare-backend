@@ -4,9 +4,6 @@ Remplit la table `products` avec des produits de démonstration.
 Chaque produit reçoit 4 vues d'images (front, gauche, dessus, droite)
 téléchargées depuis plusieurs sources d'images libres de droits.
 
-La vue de face est OBLIGATOIRE (règle métier RedSquare).
-Les autres vues sont optionnelles.
-
 Usage :
     python seed_products.py
     python seed_products.py --force
@@ -18,11 +15,16 @@ import sys
 import random
 import time
 import argparse
+import uuid
 from pathlib import Path
 from decimal import Decimal
+from io import BytesIO
 
 import requests
 from django.core.files.base import ContentFile
+from django.core.files import File
+from django.core.files.temp import NamedTemporaryFile
+from PIL import Image
 
 # ═══════════════════════════════════════════════════════════════
 # ÉTAPE 1 : Configurer Django AVANT d'importer les modèles
@@ -40,9 +42,6 @@ try:
     print("✅ Django configuré avec succès\n")
 except Exception as e:
     print(f"❌ Erreur lors du chargement de Django : {e}")
-    print("\nEssayez de définir manuellement :")
-    print("  set DJANGO_SETTINGS_MODULE=config.settings")
-    print("  python seed_products.py")
     sys.exit(1)
 
 # ═══════════════════════════════════════════════════════════════
@@ -51,6 +50,7 @@ except Exception as e:
 
 from django.contrib.auth import get_user_model
 from django.db import transaction
+from django.conf import settings
 from catalog.models import Category, Product
 
 User = get_user_model()
@@ -59,94 +59,104 @@ User = get_user_model()
 # ÉTAPE 3 : Fonctions pour télécharger les images
 # ═══════════════════════════════════════════════════════════════
 
-def download_image_picsum(keyword, width=600, height=600):
-    """Télécharge une image depuis Picsum."""
+def generate_placeholder_image(text, width=400, height=400):
+    """Génère une image placeholder avec du texte."""
     try:
-        url = f"https://picsum.photos/{width}/{height}?random={random.randint(1, 1000)}"
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
-        response = requests.get(url, headers=headers, timeout=10)
-        if response.status_code == 200:
-            return response.content
-        return None
+        # Créer une image simple avec PIL
+        img = Image.new('RGB', (width, height), color=(230, 57, 70))
+        from PIL import ImageDraw, ImageFont
+        draw = ImageDraw.Draw(img)
+        
+        # Texte centré
+        try:
+            font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 30)
+        except:
+            font = ImageFont.load_default()
+        
+        # Positionner le texte au centre
+        text_bbox = draw.textbbox((0, 0), text[:15], font=font)
+        text_width = text_bbox[2] - text_bbox[0]
+        text_height = text_bbox[3] - text_bbox[1]
+        x = (width - text_width) // 2
+        y = (height - text_height) // 2
+        draw.text((x, y), text[:15], fill=(255, 255, 255), font=font)
+        
+        # Sauvegarder en mémoire
+        buffer = BytesIO()
+        img.save(buffer, format='JPEG', quality=85)
+        return ContentFile(buffer.getvalue())
     except Exception as e:
-        print(f"  ⚠️ Erreur Picsum: {e}")
+        print(f"  ⚠️ Erreur génération placeholder: {e}")
         return None
 
-def download_image_placeholder(keyword, width=600, height=600):
-    """Télécharge une image depuis Placeholder."""
+def download_image_from_url(url, timeout=10):
+    """Télécharge une image depuis une URL."""
     try:
-        text = keyword.replace('-', ' ').title()
-        url = f"https://via.placeholder.com/{width}x{height}/E63946/FFFFFF?text={text[:20]}"
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
-        response = requests.get(url, headers=headers, timeout=10)
+        response = requests.get(url, headers=headers, timeout=timeout, allow_redirects=True)
         if response.status_code == 200:
-            return response.content
+            content_type = response.headers.get('content-type', '')
+            if 'image' in content_type:
+                return ContentFile(response.content)
         return None
     except Exception as e:
-        print(f"  ⚠️ Erreur Placeholder: {e}")
+        print(f"  ⚠️ Erreur téléchargement: {e}")
         return None
 
-def download_image_unsplash(keyword, width=600, height=600):
+def download_image_unsplash(keyword, width=400, height=400):
     """Télécharge une image depuis Unsplash."""
-    try:
-        url = f"https://source.unsplash.com/{width}x{height}/?{keyword}"
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
-        response = requests.get(url, headers=headers, timeout=10, allow_redirects=True)
-        content_type = response.headers.get('content-type', '')
-        if response.status_code == 200 and 'image' in content_type:
-            return response.content
-        return None
-    except Exception as e:
-        print(f"  ⚠️ Erreur Unsplash: {e}")
-        return None
+    url = f"https://source.unsplash.com/{width}x{height}/?{keyword}"
+    return download_image_from_url(url)
 
-def download_image_generic(keyword, filename):
-    """Télécharge une image depuis plusieurs sources."""
+def download_image_picsum(keyword, width=400, height=400):
+    """Télécharge une image depuis Picsum."""
+    url = f"https://picsum.photos/{width}/{height}?random={random.randint(1, 1000)}"
+    return download_image_from_url(url)
+
+def download_image_placeholder(keyword, width=400, height=400):
+    """Télécharge une image depuis Placeholder."""
+    text = keyword.replace('-', ' ').title()[:20]
+    url = f"https://via.placeholder.com/{width}x{height}/E63946/FFFFFF?text={text}"
+    return download_image_from_url(url)
+
+def download_all_images(keyword, base_filename):
+    """Télécharge les 4 vues d'images pour un produit."""
+    result = {'front': None, 'left': None, 'top': None, 'right': None}
+    
     sources = [
         ('Unsplash', download_image_unsplash),
         ('Picsum', download_image_picsum),
         ('Placeholder', download_image_placeholder),
     ]
     
-    for source_name, source_func in sources:
-        try:
-            print(f"    📥 Essai {source_name}...")
-            content = source_func(keyword)
-            if content:
-                print(f"    ✅ Image téléchargée via {source_name}")
-                time.sleep(0.3)
-                return ContentFile(content, name=filename)
-        except Exception as e:
-            print(f"    ❌ {source_name} échoué: {e}")
-            continue
+    views = ['front', 'left', 'top', 'right']
+    view_labels = ['FACE', 'GAUCHE', 'DESSUS', 'DROITE']
     
-    print(f"  ❌ Aucune source disponible pour « {keyword} »")
-    return None
-
-def download_all_images(keyword, base_filename):
-    """Télécharge les 4 vues d'images pour un produit."""
-    result = {'front': None, 'left': None, 'top': None, 'right': None}
-    
-    print(f"  📥 [FACE] {keyword}...")
-    front = download_image_generic(keyword, f"front_{base_filename}")
-    if front:
-        result['front'] = front
-    else:
-        print(f"  ❌ Échec du téléchargement de la vue de face pour {keyword}")
-        return None
-    
-    views = [('left', 'left'), ('top', 'top'), ('right', 'right')]
-    for view_name, suffix in views:
-        print(f"  📥 [{suffix.upper()}] {keyword}...")
-        view_keyword = f"{keyword}-{suffix}"
-        image = download_image_generic(view_keyword, f"{suffix}_{base_filename}")
-        if image:
-            result[suffix] = image
-        else:
-            print(f"  ⚠️ Vue {suffix} indisponible pour {keyword}, ignorée.")
+    for view, label in zip(views, view_labels):
+        print(f"  📥 [{label}] {keyword}...")
+        image_content = None
+        
+        # Essayer chaque source
+        for source_name, source_func in sources:
+            try:
+                content = source_func(keyword if view == 'front' else f"{keyword}-{view}")
+                if content:
+                    image_content = content
+                    print(f"    ✅ Téléchargé via {source_name}")
+                    break
+            except Exception as e:
+                continue
+        
+        # Si aucune source ne fonctionne, générer un placeholder
+        if not image_content:
+            print(f"    ⚠️ Génération d'un placeholder pour {view}")
+            image_content = generate_placeholder_image(f"{keyword[:10]}-{view[:2]}")
+        
+        if image_content:
+            result[view] = image_content
+            time.sleep(0.2)  # Pause pour ne pas surcharger les serveurs
     
     return result
-
 
 # ═══════════════════════════════════════════════════════════════
 # ÉTAPE 4 : Données des produits
@@ -195,7 +205,6 @@ PRODUCTS_DATA = [
      24, 16000, "Sport & Loisirs", "yoga"),
 ]
 
-
 # ═══════════════════════════════════════════════════════════════
 # ÉTAPE 5 : Fonction principale
 # ═══════════════════════════════════════════════════════════════
@@ -213,7 +222,7 @@ def seed_products(force=False, dry_run=False):
     # Récupérer les admins
     admins = list(User.objects.filter(is_superuser=True))
     if not admins:
-        admins = list(User.objects.filter(role__in=['admin', 'super_admin']))
+        admins = list(User.objects.filter(role='super_admin'))
     
     if not admins:
         print("❌ Aucun Admin ou Super-Admin trouvé !")
@@ -221,10 +230,7 @@ def seed_products(force=False, dry_run=False):
         print("  python manage.py createsuperuser")
         return {'success': False, 'error': 'No admin found'}
     
-    print(f"✅ {len(admins)} Admin(s)/Super-Admin(s) trouvé(s) :")
-    for admin in admins:
-        print(f"   • {admin.phone_number} ({admin.role})")
-    print("")
+    print(f"✅ {len(admins)} Admin(s)/Super-Admin(s) trouvé(s)")
     
     # Supprimer les produits si force
     if force and not dry_run:
@@ -236,7 +242,7 @@ def seed_products(force=False, dry_run=False):
     
     stats = {'created': 0, 'skipped': 0, 'errors': 0, 'total': 0}
     
-    print("📦 Création des produits :")
+    print("\n📦 Création des produits :")
     print("-" * 50)
     
     for name, description, quantity, price, category_name, keyword in PRODUCTS_DATA:
@@ -267,7 +273,6 @@ def seed_products(force=False, dry_run=False):
                 unit_price=Decimal(price),
                 category=category,
                 created_by=created_by,
-                image_front="products/default.jpg"  # Image par défaut
             )
             
             print(f"\n  📦 Produit : {name}")
@@ -278,28 +283,30 @@ def seed_products(force=False, dry_run=False):
             
             images = download_all_images(keyword, base_filename)
             
+            # Assigner les images au produit
+            img_count = 0
             if images and images.get('front'):
                 product.image_front = images['front']
-            else:
-                print(f"  ⚠️ Utilisation de l'image par défaut pour {name}")
+                img_count += 1
             
             if images and images.get('left'):
                 product.image_left = images['left']
+                img_count += 1
+            
             if images and images.get('top'):
                 product.image_top = images['top']
+                img_count += 1
+            
             if images and images.get('right'):
                 product.image_right = images['right']
+                img_count += 1
             
+            # Sauvegarder le produit avec les images
             product.save()
             stats['created'] += 1
             
-            img_count = 1
-            if product.image_left: img_count += 1
-            if product.image_top: img_count += 1
-            if product.image_right: img_count += 1
-            
-            print(f"  ✅ Produit « {name} » créé")
-            print(f"     Prix: {price:,} FCFA | {img_count}/4 vues d'images")
+            print(f"  ✅ Produit « {name} » créé avec {img_count}/4 vues d'images")
+            print(f"     Prix: {price:,} FCFA")
             
         except Exception as e:
             print(f"  ❌ Erreur pour « {name} » : {e}")
@@ -330,19 +337,8 @@ if __name__ == "__main__":
     )
     parser.add_argument('--force', action='store_true', help='Supprime et recrée tous les produits.')
     parser.add_argument('--dry-run', action='store_true', help='Simule l\'exécution sans modifier la base.')
-    parser.add_argument('--settings', type=str, default='config.settings', help='Module de configuration Django')
     
     args = parser.parse_args()
-    
-    if args.settings:
-        os.environ['DJANGO_SETTINGS_MODULE'] = args.settings
-        try:
-            import django
-            django.setup()
-            print(f"✅ Django configuré avec : {args.settings}\n")
-        except Exception as e:
-            print(f"❌ Erreur : {e}")
-            sys.exit(1)
     
     try:
         result = seed_products(force=args.force, dry_run=args.dry_run)
