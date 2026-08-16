@@ -22,6 +22,7 @@ export default function Home() {
   const [loading, setLoading] = useState(true);
   const [showWhatsApp, setShowWhatsApp] = useState(true);
   const [categoryScrollPosition, setCategoryScrollPosition] = useState(0);
+  const [error, setError] = useState(null);
   
   const categoryContainerRef = useRef(null);
   const typingIntervalRef = useRef(null);
@@ -38,26 +39,41 @@ export default function Home() {
   const [isDeleting, setIsDeleting] = useState(false);
   const [currentTextIndex, setCurrentTextIndex] = useState(0);
 
-  // Charger les catégories
+  // Charger les catégories avec gestion d'erreur
   useEffect(() => {
-    api.get("/catalog/categories/").then(({ data }) => {
-      const categoriesData = data.results || data || [];
-      setCategories(categoriesData);
-    });
+    api.get("/catalog/categories/")
+      .then(({ data }) => {
+        const categoriesData = data?.results || data || [];
+        setCategories(Array.isArray(categoriesData) ? categoriesData : []);
+      })
+      .catch((error) => {
+        console.error("Erreur chargement catégories:", error);
+        setCategories([]);
+      });
   }, []);
 
-  // Charger les produits
+  // Charger les produits avec gestion d'erreur
   useEffect(() => {
     setLoading(true);
+    setError(null);
     const params = {};
     if (selectedCategory) params.category = selectedCategory;
     if (search) params.search = search;
+    
     api
       .get("/catalog/products/", { params })
       .then(({ data }) => {
-        setProducts(data.results || data || []);
+        // ✅ Sécurisation : s'assurer que c'est un tableau
+        const productsData = data?.results || data || [];
+        setProducts(Array.isArray(productsData) ? productsData : []);
+        setLoading(false);
       })
-      .finally(() => setLoading(false));
+      .catch((error) => {
+        console.error("Erreur chargement produits:", error);
+        setError("Impossible de charger les produits. Veuillez réessayer.");
+        setProducts([]);
+        setLoading(false);
+      });
   }, [selectedCategory, search]);
 
   // Typing effect
@@ -210,7 +226,7 @@ export default function Home() {
               </div>
             </button>
 
-            {categories.map((category) => {
+            {Array.isArray(categories) && categories.map((category) => {
               const isActive = selectedCategory === category.id;
               const productCount = category.product_count || 0;
               
@@ -277,7 +293,40 @@ export default function Home() {
             <div className="w-16 h-16 border-4 border-brand-red/20 border-t-brand-red rounded-full animate-spin"></div>
             <p className="text-gray-500 mt-4">Chargement des produits...</p>
           </div>
-        ) : products.length === 0 ? (
+        ) : error ? (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="text-center py-20 bg-white rounded-2xl border border-red-100"
+          >
+            <div className="text-6xl mb-4">⚠️</div>
+            <h3 className="text-xl font-semibold text-red-600 mb-2">Erreur de chargement</h3>
+            <p className="text-gray-500">{error}</p>
+            <button
+              onClick={() => {
+                setError(null);
+                setLoading(true);
+                // Recharger les produits
+                const params = {};
+                if (selectedCategory) params.category = selectedCategory;
+                if (search) params.search = search;
+                api.get("/catalog/products/", { params })
+                  .then(({ data }) => {
+                    const productsData = data?.results || data || [];
+                    setProducts(Array.isArray(productsData) ? productsData : []);
+                    setLoading(false);
+                  })
+                  .catch((err) => {
+                    setError("Impossible de charger les produits. Veuillez réessayer.");
+                    setLoading(false);
+                  });
+              }}
+              className="mt-4 px-6 py-2 bg-brand-red text-white rounded-lg hover:bg-brand-red/90 transition"
+            >
+              Réessayer
+            </button>
+          </motion.div>
+        ) : !Array.isArray(products) || products.length === 0 ? (
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -319,7 +368,7 @@ export default function Home() {
             </div>
             {/* Grille : 1 colonne mobile, 4 colonnes desktop */}
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-              {products.map((product, index) => (
+              {Array.isArray(products) && products.map((product, index) => (
                 <motion.div
                   key={product.id}
                   custom={index}
